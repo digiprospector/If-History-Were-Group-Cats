@@ -125,12 +125,12 @@ def process_quark(args, season_data, dry_run_stats):
         client.login()
 
     try:
-        src_folder_id, is_file = client.resolve_path(args.src)
+        src_folder_id, file_type = client.resolve_path(args.src)
     except Exception as e:
         print(f"获取源目录失败: {e}。请确保指定的源目录路径在夸克网盘存在 (如 '/B站/如果历史是一群喵')")
         return
 
-    if is_file:
+    if file_type != "folder":
         print("源目录路径解析错误：是一个文件")
         return
 
@@ -144,27 +144,34 @@ def process_quark(args, season_data, dry_run_stats):
 
     print(f"成功连接夸克网盘。正在遍历目录...")
     items = get_all_quark_files(client, src_folder_id)
+    print(f"[DEBUG] 在源目录 (ID: {src_folder_id}) 中查找到 {len(items)} 个项目")
     
     dir_id_cache = {}
 
     for item in items:
         # QuarkAPI返回 file_type 或者 dir标识
-        is_dir = item.get("file_type") == "dir" or item.get("is_dir", False) or item.get("file_category") == "folder"
+        is_dir = item.get('dir', False)
         if not is_dir:
             continue
         
         dir_name = item.get("file_name", "")
-        m = re.search(r'第(\d+)(?:-(\d+))?季', dir_name)
+        print(f"[DEBUG] 季目录: {dir_name}")
+        m = re.search(r'第?(\d+)(?:-(\d+))?季', dir_name)
         if not m:
             continue
         
+        print(f"[DEBUG] 匹配到季目录: {dir_name}")
         start_s = int(m.group(1))
         end_s = int(m.group(2)) if m.group(2) else start_s
         
         sub_items = get_all_quark_files(client, item.get("fid"))
+        print(f"[DEBUG] 目录 '{dir_name}' 中包含 {len(sub_items)} 个项目")
         mp4_files = [f for f in sub_items if str(f.get("file_name", "")).lower().endswith(".mp4")]
         if not mp4_files:
+            print(f"[DEBUG] 目录 '{dir_name}' 中没有找到 .mp4 文件")
             continue
+            
+        print(f"[DEBUG] 目录 '{dir_name}' 中找到 {len(mp4_files)} 个 .mp4 文件")
             
         mp4_files.sort(key=lambda x: get_last_num(x.get("file_name", "")))
         
