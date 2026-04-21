@@ -25,13 +25,20 @@ def get_last_num(path_obj):
 def main():
     parser = argparse.ArgumentParser(description='根据 titles.json 链接或复制视频文件')
     parser.add_argument('-c', '--copy', action='store_true', help='使用复制 (copy) 而不是符号链接')
-    parser.add_argument('-d', '--dry', action='store_true', help='演练模式 (dry run)，仅打印操作，不实际修改文件系统')
+    parser.add_argument('-d', '--dst', default=None, help='指定目标输出目录 (默认为源目录)')
+    parser.add_argument('-n', '--dry', action='store_true', help='演练模式 (dry run)，仅打印操作，不实际修改文件系统')
+    parser.add_argument('-s', '--src', default='.', help='指定包含源视频文件和 titles.json 的源目录 (默认为当前目录)')
     args = parser.parse_args()
 
-    titles_path = Path('titles.json')
+    base_dir = Path(args.src)
+    dst_dir = Path(args.dst) if args.dst else base_dir
+    titles_path = base_dir / 'titles.json'
     if not titles_path.exists():
-        print("错误: 当前目录下找不到 titles.json 文件！")
-        return
+        # 回退：如果源目录里没有，尝试在当前执行目录找
+        titles_path = Path('titles.json')
+        if not titles_path.exists():
+            print(f"错误: 找不到 titles.json 文件！请确保在 {base_dir} 或当前目录下有此文件。")
+            return
 
     with open(titles_path, 'r', encoding='utf-8') as f:
         titles_data = json.load(f)
@@ -42,8 +49,6 @@ def main():
     season_data = {}
     for i, ep in enumerate(episodes, 1):
         season_data[i] = ep
-
-    base_dir = Path('.')
     
     # 遍历当前目录下的所有子目录
     for item in base_dir.iterdir():
@@ -94,7 +99,7 @@ def main():
             # 确定新的文件名称
             file_name = f"{c_idx:02d} {c_name}.mp4" if ADD_INDEX_PREFIX else f"{c_name}.mp4"
             
-            new_dir = base_dir / dir_name
+            new_dir = dst_dir / dir_name
             if not args.dry:
                 new_dir.mkdir(parents=True, exist_ok=True)
             
@@ -106,11 +111,11 @@ def main():
                 
             prefix = "[DRY RUN] " if args.dry else ""
             if args.copy:
-                print(f"{prefix}复制并重命名: '{fpath}' -> '{new_file}'")
+                print(f"{prefix}把 '{fpath}' 复制到 '{new_file}'")
                 if not args.dry:
                     shutil.copy2(fpath, new_file)
             else:
-                print(f"{prefix}创建符号链接: '{fpath}' -> '{new_file}'")
+                print(f"{prefix}把 '{fpath}' 链接到 '{new_file}'")
                 if not args.dry:
                     try:
                         os.symlink(fpath.absolute(), new_file)
