@@ -23,18 +23,18 @@ def process_local(args, season_data, dry_run_stats):
         if not item.is_dir():
             continue
             
-        m = re.search(r'第(\d+)(?:-(\d+))?季', item.name)
+        m = re.search(r'第?(\d+)(?:-(\d+))?季', item.name)
         if not m:
             continue
             
         start_s = int(m.group(1))
         end_s = int(m.group(2)) if m.group(2) else start_s
         
-        mp4_files = list(item.rglob('*.mp4'))
-        if not mp4_files:
+        video_files = [p for p in item.rglob('*') if p.suffix.lower() in ('.mp4', '.mkv')]
+        if not video_files:
             continue
             
-        mp4_files.sort(key=lambda p: get_last_num(p.stem))
+        video_files.sort(key=lambda p: get_last_num(p.stem))
         
         target_chapters = []
         for s in range(start_s, end_s + 1):
@@ -48,14 +48,14 @@ def process_local(args, season_data, dry_run_stats):
                         'chapter_name': ch_name
                     })
                     
-        for fpath, target in zip(mp4_files, target_chapters):
+        for fpath, target in zip(video_files, target_chapters):
             s_num = target['season_num']
             s_title = target['season_title']
             c_name = target['chapter_name']
             c_idx = target['chapter_idx']
             
             dir_name = f"{s_num:02d}. {s_title}"
-            file_name = f"{c_idx:02d}. {c_name}.mp4"
+            file_name = f"{c_idx:02d}. {c_name}{fpath.suffix}"
             
             new_dir = dst_dir / dir_name
             if not args.dry:
@@ -166,81 +166,97 @@ def process_quark(args, season_data, dry_run_stats):
         
         sub_items = get_all_quark_files(client, item.get("fid"))
         print(f"[DEBUG] 目录 '{dir_name}' 中包含 {len(sub_items)} 个项目")
-        mp4_files = [f for f in sub_items if str(f.get("file_name", "")).lower().endswith(".mp4")]
-        if not mp4_files:
-            print(f"[DEBUG] 目录 '{dir_name}' 中没有找到 .mp4 文件")
-            continue
-            
-        print(f"[DEBUG] 目录 '{dir_name}' 中找到 {len(mp4_files)} 个 .mp4 文件")
-            
-        mp4_files.sort(key=lambda x: get_last_num(x.get("file_name", "")))
+        video_files = [f for f in sub_items if str(f.get("file_name", "")).lower().endswith((".mp4", ".mkv"))]
         
-        target_chapters = []
-        for s in range(start_s, end_s + 1):
-            if s in season_data:
-                s_title = season_data[s]['title']
-                for ch_idx, ch_name in enumerate(season_data[s]['chapters'], 1):
-                    target_chapters.append({
-                        'season_num': s,
-                        'season_title': s_title,
-                        'chapter_idx': ch_idx,
-                        'chapter_name': ch_name
-                    })
-                    
-        for f, target in zip(mp4_files, target_chapters):
-            s_num = target['season_num']
-            s_title = target['season_title']
-            c_name = target['chapter_name']
-            c_idx = target['chapter_idx']
+        if video_files:
+            print(f"[DEBUG] 目录 '{dir_name}' 中找到 {len(video_files)} 个视频文件")
+            video_files.sort(key=lambda x: get_last_num(x.get("file_name", "")))
             
-            new_dir_name = f"{s_num:02d}. {s_title}"
-            new_file_name = f"{c_idx:02d}. {c_name}.mp4"
-            
-            f_name = f.get("file_name", "")
-            f_id = f.get("fid")
-            
-            prefix = "[DRY RUN] " if args.dry else ""
-            print(f"{prefix}把夸克文件 '{f_name}' 移动并重命名为 '{new_dir_name}/{new_file_name}'")
-            
-            if not args.dry:
-                new_dir_id = dir_id_cache.get(new_dir_name)
-                if not new_dir_id:
-                    # 尝试创建
-                    try:
-                        res = client.create_folder(new_dir_name, parent_id=dst_folder_id)
-                        new_dir_id = res.get("data", {}).get("fid", "")
-                        dir_id_cache[new_dir_name] = new_dir_id
-                    except Exception:
-                        # 失败则说明可能存在，尝试解析
-                        try:
-                            dst_full = dst_folder_path.rstrip("/") + "/" + new_dir_name
-                            new_dir_id, _ = client.resolve_path(dst_full)
-                            dir_id_cache[new_dir_name] = new_dir_id
-                        except Exception as e2:
-                            print(f"  [失败] 无法创建或获取目录 '{new_dir_name}': {e2}")
-                            continue
+            target_chapters = []
+            for s in range(start_s, end_s + 1):
+                if s in season_data:
+                    s_title = season_data[s]['title']
+                    for ch_idx, ch_name in enumerate(season_data[s]['chapters'], 1):
+                        target_chapters.append({
+                            'season_num': s,
+                            'season_title': s_title,
+                            'chapter_idx': ch_idx,
+                            'chapter_name': ch_name
+                        })
+                        
+            for f, target in zip(video_files, target_chapters):
+                s_num = target['season_num']
+                s_title = target['season_title']
+                c_name = target['chapter_name']
+                c_idx = target['chapter_idx']
                 
-                # Quark要求重命名不能带有 /。重命名后通过 move_files 移动
-                try:
-                    client.rename_file(f_id, new_file_name)
-                except Exception as e:
-                    print(f"  [失败] 重命名文件失败 '{f_name}'->'{new_file_name}': {e}")
+                f_name = f.get("file_name", "")
+                f_id = f.get("fid")
+                ext = os.path.splitext(f_name)[1]
+                
+                new_dir_name = f"{s_num:02d}. {s_title}"
+                new_file_name = f"{c_idx:02d}. {c_name}{ext}"
+                
+                prefix = "[DRY RUN] " if args.dry else ""
+                print(f"{prefix}把夸克文件 '{f_name}' 移动并重命名为 '{new_dir_name}/{new_file_name}'")
+                
+                if not args.dry:
+                    new_dir_id = dir_id_cache.get(new_dir_name)
+                    if not new_dir_id:
+                        # 尝试创建
+                        try:
+                            res = client.create_folder(new_dir_name, parent_id=dst_folder_id)
+                            new_dir_id = res.get("data", {}).get("fid", "")
+                            dir_id_cache[new_dir_name] = new_dir_id
+                        except Exception:
+                            # 失败则说明可能存在，尝试解析
+                            try:
+                                dst_full = dst_folder_path.rstrip("/") + "/" + new_dir_name
+                                new_dir_id, _ = client.resolve_path(dst_full)
+                                dir_id_cache[new_dir_name] = new_dir_id
+                            except Exception as e2:
+                                print(f"  [失败] 无法创建或获取目录 '{new_dir_name}': {e2}")
+                                continue
                     
-                try:
-                    client.move_files([f_id], new_dir_id)
-                except Exception as e:
-                    print(f"  [失败] 移动文件失败 '{new_file_name}': {e}")
-            
-            if args.dry:
-                src_cn = extract_chinese(f_name.replace(".mp4", ""))
-                dst_cn = extract_chinese(c_name)
-                if not src_cn:
-                    dry_run_stats["no_chinese_src"].append(f_name)
-                else:
-                    if src_cn == dst_cn:
-                        dry_run_stats["match"] += 1
+                    # Quark要求重命名不能带有 /。重命名后通过 move_files 移动
+                    try:
+                        client.rename_file(f_id, new_file_name)
+                    except Exception as e:
+                        print(f"  [失败] 重命名文件失败 '{f_name}'->'{new_file_name}': {e}")
+                        
+                    try:
+                        client.move_files([f_id], new_dir_id)
+                    except Exception as e:
+                        print(f"  [失败] 移动文件失败 '{new_file_name}': {e}")
+                
+                if args.dry:
+                    src_cn = extract_chinese(f_name.replace(".mp4", ""))
+                    dst_cn = extract_chinese(c_name)
+                    if not src_cn:
+                        dry_run_stats["no_chinese_src"].append(f_name)
                     else:
-                        dry_run_stats["mismatch"].append((f_name, src_cn, dst_cn))
+                        if src_cn == dst_cn:
+                            dry_run_stats["match"] += 1
+                        else:
+                            dry_run_stats["mismatch"].append((f_name, src_cn, dst_cn))
+        else:
+            print(f"[DEBUG] 目录 '{dir_name}' 中没有找到视频文件")
+
+        # 检查是否需要删除空目录
+        if not args.dry:
+            try:
+                # 重新检查目录内容，确认是否已清空
+                remaining = get_all_quark_files(client, item.get("fid"))
+                if not remaining:
+                    print(f"删除已清空的源目录: {dir_name}")
+                    client.delete_files([item.get("fid")])
+            except Exception as e:
+                print(f"  [失败] 无法检查或删除目录 '{dir_name}': {e}")
+        else:
+            # 在 dry run 中，我们检查 sub_items 或 video_files 来模拟
+            if not sub_items or (video_files and len(sub_items) == len(video_files)):
+                print(f"[DRY RUN] 将删除已清空的源目录: {dir_name}")
+
 
 def main():
     parser = argparse.ArgumentParser(description='根据 episode_titles.json 链接或复制视频文件（支持夸克网盘）')
