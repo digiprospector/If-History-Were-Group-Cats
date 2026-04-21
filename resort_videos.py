@@ -13,21 +13,21 @@ def get_last_num(path_obj):
     return int(nums[-1]) if nums else 0
 
 def main():
-    parser = argparse.ArgumentParser(description='根据 titles.json 链接或复制视频文件')
+    parser = argparse.ArgumentParser(description='根据 episode_titles.json 链接或复制视频文件')
     parser.add_argument('-c', '--copy', action='store_true', help='使用复制 (copy) 而不是符号链接')
     parser.add_argument('-d', '--dst', default=None, help='指定目标输出目录 (默认为源目录)')
     parser.add_argument('-D', '--dry', action='store_true', help='演练模式 (dry run)，仅打印操作，不实际修改文件系统')
-    parser.add_argument('-s', '--src', default='.', help='指定包含源视频文件和 titles.json 的源目录 (默认为当前目录)')
+    parser.add_argument('-s', '--src', default='.', help='指定包含源视频文件和 episode_titles.json 的源目录 (默认为当前目录)')
     args = parser.parse_args()
 
     base_dir = Path(args.src)
     dst_dir = Path(args.dst) if args.dst else base_dir
-    titles_path = base_dir / 'titles.json'
+    titles_path = base_dir / 'episode_titles.json'
     if not titles_path.exists():
         # 回退：如果源目录里没有，尝试在当前执行目录找
-        titles_path = Path('titles.json')
+        titles_path = Path('episode_titles.json')
         if not titles_path.exists():
-            print(f"错误: 找不到 titles.json 文件！请确保在 {base_dir} 或当前目录下有此文件。")
+            print(f"错误: 找不到 episode_titles.json 文件！请确保在 {base_dir} 或当前目录下有此文件。")
             return
 
     with open(titles_path, 'r', encoding='utf-8') as f:
