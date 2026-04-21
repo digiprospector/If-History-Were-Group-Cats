@@ -9,7 +9,7 @@ from pathlib import Path
 
 def get_last_num(path_obj):
     """提取文件名中的最后一个数字，用于正确排序"""
-    nums = re.findall(r'\d+', path_obj.name)
+    nums = re.findall(r'\d+', path_obj.stem)
     return int(nums[-1]) if nums else 0
 
 def main():
