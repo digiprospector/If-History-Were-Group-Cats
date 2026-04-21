@@ -26,7 +26,7 @@ def main():
     parser = argparse.ArgumentParser(description='根据 titles.json 链接或复制视频文件')
     parser.add_argument('-c', '--copy', action='store_true', help='使用复制 (copy) 而不是符号链接')
     parser.add_argument('-d', '--dst', default=None, help='指定目标输出目录 (默认为源目录)')
-    parser.add_argument('-n', '--dry', action='store_true', help='演练模式 (dry run)，仅打印操作，不实际修改文件系统')
+    parser.add_argument('-D', '--dry', action='store_true', help='演练模式 (dry run)，仅打印操作，不实际修改文件系统')
     parser.add_argument('-s', '--src', default='.', help='指定包含源视频文件和 titles.json 的源目录 (默认为当前目录)')
     args = parser.parse_args()
 
