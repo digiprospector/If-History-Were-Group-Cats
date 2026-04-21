@@ -5,17 +5,7 @@ import shutil
 import argparse
 from pathlib import Path
 
-# ==========================================
-# 配置选项 (Configuration)
-# ==========================================
-# 是否在重命名后的文件名前加上章节序号 (例如: "01 华夏诞生.mp4")
-# 如果为 False，则严格按照 titles.json 中的名字 (例如: "华夏诞生.mp4")
-ADD_INDEX_PREFIX = False
 
-# 是否在重命名后的目录名前加上季数序号 (例如: "第01季 夏商西周")
-# 如果为 False，则严格按照 titles.json 中的名字 (例如: "夏商西周")
-ADD_SEASON_PREFIX = False
-# ==========================================
 
 def get_last_num(path_obj):
     """提取文件名中的最后一个数字，用于正确排序"""
@@ -94,10 +84,10 @@ def main():
             c_idx = target['chapter_idx']
             
             # 确定新的目录名称
-            dir_name = f"第{s_num:02d}季 {s_title}" if ADD_SEASON_PREFIX else s_title
+            dir_name = f"{s_num:02d}. {s_title}"
             
             # 确定新的文件名称
-            file_name = f"{c_idx:02d} {c_name}.mp4" if ADD_INDEX_PREFIX else f"{c_name}.mp4"
+            file_name = f"{c_idx:02d}. {c_name}.mp4"
             
             new_dir = dst_dir / dir_name
             if not args.dry:
