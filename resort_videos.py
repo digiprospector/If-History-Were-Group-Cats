@@ -22,6 +22,12 @@ def main():
 
     base_dir = Path(args.src)
     dst_dir = Path(args.dst) if args.dst else base_dir
+    
+    dry_run_stats = {
+        "match": 0,
+        "mismatch": [],
+        "no_chinese_src": []
+    }
     titles_path = base_dir / 'episode_titles.json'
     if not titles_path.exists():
         # 回退：如果源目录里没有，尝试在当前执行目录找
@@ -111,8 +117,33 @@ def main():
                         os.symlink(fpath.absolute(), new_file)
                     except OSError as e:
                         print(f"  [失败] 无法创建符号链接 ({e})。在 Windows 上可能需要管理员权限或开启开发者模式。")
+                        
+            if args.dry:
+                src_cn = "".join(re.findall(r'[\u4e00-\u9fa5]+', fpath.stem))
+                dst_cn = "".join(re.findall(r'[\u4e00-\u9fa5]+', c_name))
+                if not src_cn:
+                    dry_run_stats["no_chinese_src"].append(str(fpath))
+                else:
+                    if src_cn == dst_cn:
+                        dry_run_stats["match"] += 1
+                    else:
+                        dry_run_stats["mismatch"].append((str(fpath), src_cn, dst_cn))
             
     print("\n所有文件操作完成！")
+    
+    if args.dry:
+        print("\n=== DRY RUN 汉字匹配统计 ===")
+        print(f"匹配成功: {dry_run_stats['match']} 个文件")
+        if dry_run_stats['mismatch']:
+            print(f"匹配不一致 ({len(dry_run_stats['mismatch'])} 个):")
+            for p, s, d in dry_run_stats['mismatch']:
+                print(f"  文件: {p}")
+                print(f"    源汉字: {s}")
+                print(f"    目标汉字: {d}")
+        if dry_run_stats['no_chinese_src']:
+            print(f"源文件无汉字 ({len(dry_run_stats['no_chinese_src'])} 个):")
+            for p in dry_run_stats['no_chinese_src']:
+                print(f"  {p}")
 
 if __name__ == '__main__':
     main()
