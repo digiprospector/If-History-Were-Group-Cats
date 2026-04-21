@@ -45,8 +45,8 @@ def main():
         if not item.is_dir():
             continue
             
-        # 匹配目录名，如 "第1-3季", "1-3季", "第7季", "10季 宋辽金夏篇"
-        m = re.search(r'(?:第)?(\d+)(?:-(\d+))?季', item.name)
+        # 匹配目录名，如 "第1-3季", "第7季", "第10季 宋辽金夏篇"
+        m = re.search(r'第(\d+)(?:-(\d+))?季', item.name)
         if not m:
             continue
             
@@ -62,48 +62,22 @@ def main():
         # 这样能保证 EP138...01, EP146...09, 10, 11, 12 这样的文件顺序正确
         mp4_files.sort(key=get_last_num)
         
-        # 根据映射的季数和每季集数，分配目标章节
-        target_assignments = []
-        seasons_in_dir = list(range(start_s, end_s + 1))
-        
-        current_season_idx = 0
-        current_chapter_idx = 1
-        
-        for fpath in mp4_files:
-            if current_season_idx >= len(seasons_in_dir):
-                print(f"警告: 目录 '{item.name}' 中的文件过多，超出定义的季数。跳过 '{fpath.name}'")
-                continue
-                
-            s = seasons_in_dir[current_season_idx]
-            if s not in season_data:
-                print(f"警告: titles.json 中没有第 {s} 季的数据。跳过 '{fpath.name}'")
-                continue
-                
-            s_title = season_data[s].get('title', f"第{s}季")
-            s_count = season_data[s].get('chapters_count', 99)
-            
-            # 从原文件名中提取集标题
-            name = fpath.stem.strip()
-            name = re.sub(r'^EP\d+\s*', '', name)
-            name = re.sub(r'\s*\d+$', '', name)
-            c_name = name.strip()
-            
-            target_assignments.append({
-                'season_num': s,
-                'season_title': s_title,
-                'chapter_idx': current_chapter_idx,
-                'chapter_name': c_name,
-                'fpath': fpath
-            })
-            
-            current_chapter_idx += 1
-            if current_chapter_idx > s_count:
-                current_season_idx += 1
-                current_chapter_idx = 1
-                
+        # 根据映射的季数，收集目标章节名称
+        target_chapters = []
+        for s in range(start_s, end_s + 1):
+            if s in season_data:
+                s_title = season_data[s]['title']
+                for ch_idx, ch_name in enumerate(season_data[s]['chapters'], 1):
+                    target_chapters.append({
+                        'season_num': s,
+                        'season_title': s_title,
+                        'chapter_idx': ch_idx,
+                        'chapter_name': ch_name
+                    })
+                    
         # 处理文件
-        for target in target_assignments:
-            fpath = target['fpath']
+        # zip() 会安全地匹配文件和目标章节（多余的章节会被忽略，适应动画版合并章节的情况）
+        for fpath, target in zip(mp4_files, target_chapters):
             s_num = target['season_num']
             s_title = target['season_title']
             c_name = target['chapter_name']

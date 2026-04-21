@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python
+#!/usr/bin/env python
 """Fetch episode titles from all discovered seasons in a Bilibili bangumi series."""
 
 from __future__ import annotations
@@ -174,55 +174,61 @@ def save_json(records: list[EpisodeRecord], path: Path, use_template: bool = Fal
                 template_books = [b for b in books_value if isinstance(b, dict)]
         except Exception:
             template_books = []
-    print(template_books)
+    def extract_start_season(title: str) -> int:
+        m = re.search(r'(\d+)(?:-\d+)?季', title)
+        if m:
+            return int(m.group(1))
+        return 999
 
-    books: list[dict[str, Any]] = []
-    group_index: dict[tuple[int, str], int] = {}
+    bili_groups: dict[str, list[EpisodeRecord]] = {}
+    for r in records:
+        bili_groups.setdefault(r.season_title, []).append(r)
+        
+    sorted_groups = sorted(bili_groups.items(), key=lambda x: extract_start_season(x[0]))
+    
+    books_output: list[dict[str, Any]] = []
+    book_index = 0
+    
+    for group_title, ep_records in sorted_groups:
+        m = re.search(r'(\d+)(?:-(\d+))?季', group_title)
+        if m:
+            start_s = int(m.group(1))
+            end_s = int(m.group(2)) if m.group(2) else start_s
+            num_seasons = end_s - start_s + 1
+        else:
+            num_seasons = 1
+            
+        ep_titles = [r.long_title.strip() or r.full_title.strip() or r.ep_no.strip() for r in ep_records]
+        ep_idx = 0
+        
+        for i in range(num_seasons):
+            is_last = (i == num_seasons - 1)
+            
+            if book_index < len(template_books):
+                template_book = template_books[book_index]
+                book_title = template_book.get('title', f"Book {book_index + 1}")
+                expected_count = template_book.get('chapters_count', 0)
+            else:
+                book_title = f"{group_title} ({i+1})" if num_seasons > 1 else group_title
+                expected_count = 0
+                
+            if is_last:
+                chunk = ep_titles[ep_idx:]
+                ep_idx += len(chunk)
+            else:
+                take_count = expected_count if expected_count > 0 else (len(ep_titles) // num_seasons)
+                chunk = ep_titles[ep_idx : ep_idx + take_count]
+                ep_idx += take_count
+                
+            if chunk or not is_last:
+                books_output.append({
+                    "title": book_title,
+                    "chapters": chunk
+                })
+            
+            book_index += 1
 
-    for record in records:
-        group_key = (record.season_id, record.season_title)
-        if group_key not in group_index:
-            idx = len(books)
-            group_index[group_key] = idx
-            template_title = ""
-            if idx < len(template_books):
-                template_title = str(template_books[idx].get("title", "")).strip()
-            title = record.season_title.strip() or template_title or f"Book {idx + 1}"
-            books.append({"title": title, "chapters": []})
-
-        idx = group_index[group_key]
-        chapter = record.long_title.strip() or record.full_title.strip() or record.ep_no.strip()
-        if not chapter and idx < len(template_books):
-            template_chapters = template_books[idx].get("chapters", [])
-            if isinstance(template_chapters, list):
-                chapter_idx = len(books[idx]["chapters"])
-                if chapter_idx < len(template_chapters):
-                    chapter = str(template_chapters[chapter_idx]).strip()
-        books[idx]["chapters"].append(chapter)
-
-    # Force first 5 groups to use template titles and template chapter counts.
-    for idx in range(min(5, len(books), len(template_books))):
-        template_title = str(template_books[idx].get("title", "")).strip()
-        if template_title:
-            books[idx]["title"] = template_title
-
-        template_chapters = template_books[idx].get("chapters", [])
-        if not isinstance(template_chapters, list):
-            continue
-
-        current_chapters = books[idx]["chapters"]
-        adjusted_chapters: list[str] = []
-        for chapter_idx, template_value in enumerate(template_chapters):
-            website_value = (
-                str(current_chapters[chapter_idx]).strip()
-                if chapter_idx < len(current_chapters)
-                else ""
-            )
-            template_fallback = str(template_value).strip()
-            adjusted_chapters.append(website_value or template_fallback)
-        books[idx]["chapters"] = adjusted_chapters
-
-    payload = {"episodes": books}
+    payload = {"episodes": books_output}
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
