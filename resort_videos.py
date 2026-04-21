@@ -1,57 +1,28 @@
 import os
+import sys
+import io
 import json
 import re
 import shutil
 import argparse
 from pathlib import Path
 
-
-
-def get_last_num(path_obj):
-    """提取文件名中的最后一个数字，用于正确排序"""
-    nums = re.findall(r'\d+', path_obj.stem)
+def get_last_num(name):
+    """提取字符串中的最后一个数字，用于正确排序"""
+    nums = re.findall(r'\d+', name)
     return int(nums[-1]) if nums else 0
 
-def main():
-    parser = argparse.ArgumentParser(description='根据 episode_titles.json 链接或复制视频文件')
-    parser.add_argument('-c', '--copy', action='store_true', help='使用复制 (copy) 而不是符号链接')
-    parser.add_argument('-d', '--dst', default=None, help='指定目标输出目录 (默认为源目录)')
-    parser.add_argument('-D', '--dry', action='store_true', help='演练模式 (dry run)，仅打印操作，不实际修改文件系统')
-    parser.add_argument('-s', '--src', default='.', help='指定包含源视频文件和 episode_titles.json 的源目录 (默认为当前目录)')
-    args = parser.parse_args()
+def extract_chinese(text):
+    return "".join(re.findall(r'[\u4e00-\u9fa5]+', text))
 
+def process_local(args, season_data, dry_run_stats):
     base_dir = Path(args.src)
     dst_dir = Path(args.dst) if args.dst else base_dir
-    
-    dry_run_stats = {
-        "match": 0,
-        "mismatch": [],
-        "no_chinese_src": []
-    }
-    titles_path = base_dir / 'episode_titles.json'
-    if not titles_path.exists():
-        # 回退：如果源目录里没有，尝试在当前执行目录找
-        titles_path = Path('episode_titles.json')
-        if not titles_path.exists():
-            print(f"错误: 找不到 episode_titles.json 文件！请确保在 {base_dir} 或当前目录下有此文件。")
-            return
 
-    with open(titles_path, 'r', encoding='utf-8') as f:
-        titles_data = json.load(f)
-    
-    episodes = titles_data.get('episodes', [])
-    
-    # 建立季数 (从1开始) 到 季信息的映射
-    season_data = {}
-    for i, ep in enumerate(episodes, 1):
-        season_data[i] = ep
-    
-    # 遍历当前目录下的所有子目录
     for item in base_dir.iterdir():
         if not item.is_dir():
             continue
             
-        # 匹配目录名，如 "第1-3季", "第7季", "第10季 宋辽金夏篇"
         m = re.search(r'第(\d+)(?:-(\d+))?季', item.name)
         if not m:
             continue
@@ -59,16 +30,12 @@ def main():
         start_s = int(m.group(1))
         end_s = int(m.group(2)) if m.group(2) else start_s
         
-        # 收集该目录下的所有 mp4 文件
         mp4_files = list(item.rglob('*.mp4'))
         if not mp4_files:
             continue
             
-        # 根据文件名中的最后一个数字进行排序
-        # 这样能保证 EP138...01, EP146...09, 10, 11, 12 这样的文件顺序正确
-        mp4_files.sort(key=get_last_num)
+        mp4_files.sort(key=lambda p: get_last_num(p.stem))
         
-        # 根据映射的季数，收集目标章节名称
         target_chapters = []
         for s in range(start_s, end_s + 1):
             if s in season_data:
@@ -81,18 +48,13 @@ def main():
                         'chapter_name': ch_name
                     })
                     
-        # 处理文件
-        # zip() 会安全地匹配文件和目标章节（多余的章节会被忽略，适应动画版合并章节的情况）
         for fpath, target in zip(mp4_files, target_chapters):
             s_num = target['season_num']
             s_title = target['season_title']
             c_name = target['chapter_name']
             c_idx = target['chapter_idx']
             
-            # 确定新的目录名称
             dir_name = f"{s_num:02d}. {s_title}"
-            
-            # 确定新的文件名称
             file_name = f"{c_idx:02d}. {c_name}.mp4"
             
             new_dir = dst_dir / dir_name
@@ -100,7 +62,6 @@ def main():
                 new_dir.mkdir(parents=True, exist_ok=True)
             
             new_file = new_dir / file_name
-            
             if new_file.exists():
                 print(f"跳过: 目标文件已存在 '{new_file}'")
                 continue
@@ -119,8 +80,8 @@ def main():
                         print(f"  [失败] 无法创建符号链接 ({e})。在 Windows 上可能需要管理员权限或开启开发者模式。")
                         
             if args.dry:
-                src_cn = "".join(re.findall(r'[\u4e00-\u9fa5]+', fpath.stem))
-                dst_cn = "".join(re.findall(r'[\u4e00-\u9fa5]+', c_name))
+                src_cn = extract_chinese(fpath.stem)
+                dst_cn = extract_chinese(c_name)
                 if not src_cn:
                     dry_run_stats["no_chinese_src"].append(str(fpath))
                 else:
@@ -128,7 +89,189 @@ def main():
                         dry_run_stats["match"] += 1
                     else:
                         dry_run_stats["mismatch"].append((str(fpath), src_cn, dst_cn))
+
+def get_all_quark_files(client, folder_id):
+    files = []
+    page = 1
+    while True:
+        try:
+            resp = client.list_files(folder_id, page=page, size=100)
+            items = resp.get("data", {}).get("list", [])
+        except Exception:
+            items = []
+        if not items:
+            break
+        files.extend(items)
+        if len(items) < 100:
+            break
+        page += 1
+    return files
+
+def process_quark(args, season_data, dry_run_stats):
+    if sys.platform == 'win32' and sys.stdout.encoding.lower() != 'utf-8':
+        try:
+            sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+        except Exception:
+            pass
+
+    try:
+        from quark_client import QuarkClient
+    except ImportError:
+        print("错误: 缺少 quarkpan 库。请先运行 'pip install quarkpan'")
+        return
+
+    client = QuarkClient()
+    if not client.is_logged_in():
+        client.login()
+
+    try:
+        src_folder_id, is_file = client.resolve_path(args.src)
+    except Exception as e:
+        print(f"获取源目录失败: {e}。请确保指定的源目录路径在夸克网盘存在 (如 '/B站/如果历史是一群喵')")
+        return
+
+    if is_file:
+        print("源目录路径解析错误：是一个文件")
+        return
+
+    dst_folder_path = args.dst if args.dst else args.src
+    # 尝试解析目标目录，如果不存在，尝试在根目录查找或报错
+    try:
+        dst_folder_id, _ = client.resolve_path(dst_folder_path)
+    except Exception:
+        print(f"目标目录 '{dst_folder_path}' 在网盘上不存在。夸克网盘模式下，目标目录路径必须存在。请手动在网盘上创建。")
+        return
+
+    print(f"成功连接夸克网盘。正在遍历目录...")
+    items = get_all_quark_files(client, src_folder_id)
+    
+    dir_id_cache = {}
+
+    for item in items:
+        # QuarkAPI返回 file_type 或者 dir标识
+        is_dir = item.get("file_type") == "dir" or item.get("is_dir", False) or item.get("file_category") == "folder"
+        if not is_dir:
+            continue
+        
+        dir_name = item.get("file_name", "")
+        m = re.search(r'第(\d+)(?:-(\d+))?季', dir_name)
+        if not m:
+            continue
+        
+        start_s = int(m.group(1))
+        end_s = int(m.group(2)) if m.group(2) else start_s
+        
+        sub_items = get_all_quark_files(client, item.get("fid"))
+        mp4_files = [f for f in sub_items if str(f.get("file_name", "")).lower().endswith(".mp4")]
+        if not mp4_files:
+            continue
             
+        mp4_files.sort(key=lambda x: get_last_num(x.get("file_name", "")))
+        
+        target_chapters = []
+        for s in range(start_s, end_s + 1):
+            if s in season_data:
+                s_title = season_data[s]['title']
+                for ch_idx, ch_name in enumerate(season_data[s]['chapters'], 1):
+                    target_chapters.append({
+                        'season_num': s,
+                        'season_title': s_title,
+                        'chapter_idx': ch_idx,
+                        'chapter_name': ch_name
+                    })
+                    
+        for f, target in zip(mp4_files, target_chapters):
+            s_num = target['season_num']
+            s_title = target['season_title']
+            c_name = target['chapter_name']
+            c_idx = target['chapter_idx']
+            
+            new_dir_name = f"{s_num:02d}. {s_title}"
+            new_file_name = f"{c_idx:02d}. {c_name}.mp4"
+            
+            f_name = f.get("file_name", "")
+            f_id = f.get("fid")
+            
+            prefix = "[DRY RUN] " if args.dry else ""
+            print(f"{prefix}把夸克文件 '{f_name}' 移动并重命名为 '{new_dir_name}/{new_file_name}'")
+            
+            if not args.dry:
+                new_dir_id = dir_id_cache.get(new_dir_name)
+                if not new_dir_id:
+                    # 尝试创建
+                    try:
+                        res = client.create_folder(new_dir_name, parent_id=dst_folder_id)
+                        new_dir_id = res.get("data", {}).get("fid", "")
+                        dir_id_cache[new_dir_name] = new_dir_id
+                    except Exception:
+                        # 失败则说明可能存在，尝试解析
+                        try:
+                            dst_full = dst_folder_path.rstrip("/") + "/" + new_dir_name
+                            new_dir_id, _ = client.resolve_path(dst_full)
+                            dir_id_cache[new_dir_name] = new_dir_id
+                        except Exception as e2:
+                            print(f"  [失败] 无法创建或获取目录 '{new_dir_name}': {e2}")
+                            continue
+                
+                # Quark要求重命名不能带有 /。重命名后通过 move_files 移动
+                try:
+                    client.rename_file(f_id, new_file_name)
+                except Exception as e:
+                    print(f"  [失败] 重命名文件失败 '{f_name}'->'{new_file_name}': {e}")
+                    
+                try:
+                    client.move_files([f_id], new_dir_id)
+                except Exception as e:
+                    print(f"  [失败] 移动文件失败 '{new_file_name}': {e}")
+            
+            if args.dry:
+                src_cn = extract_chinese(f_name.replace(".mp4", ""))
+                dst_cn = extract_chinese(c_name)
+                if not src_cn:
+                    dry_run_stats["no_chinese_src"].append(f_name)
+                else:
+                    if src_cn == dst_cn:
+                        dry_run_stats["match"] += 1
+                    else:
+                        dry_run_stats["mismatch"].append((f_name, src_cn, dst_cn))
+
+def main():
+    parser = argparse.ArgumentParser(description='根据 episode_titles.json 链接或复制视频文件（支持夸克网盘）')
+    parser.add_argument('-c', '--copy', action='store_true', help='(仅本地) 使用复制 (copy) 而不是符号链接')
+    parser.add_argument('-d', '--dst', default=None, help='指定目标输出目录 (默认为源目录)')
+    parser.add_argument('-D', '--dry', action='store_true', help='演练模式 (dry run)，仅打印操作，不实际修改文件系统')
+    parser.add_argument('-s', '--src', default='.', help='指定包含源视频文件的源目录 (默认为当前目录)')
+    parser.add_argument('--quark', action='store_true', help='启用夸克网盘模式 (将直接连接云盘进行移动和重命名)')
+    args = parser.parse_args()
+
+    # titles.json 是本地读取的
+    base_dir = Path(args.src if not args.quark else '.')
+    titles_path = base_dir / 'episode_titles.json'
+    if not titles_path.exists():
+        titles_path = Path('episode_titles.json')
+        if not titles_path.exists():
+            print(f"错误: 找不到 episode_titles.json 文件！请确保在当前目录下有此文件。")
+            return
+
+    with open(titles_path, 'r', encoding='utf-8') as f:
+        titles_data = json.load(f)
+    
+    episodes = titles_data.get('episodes', [])
+    season_data = {}
+    for i, ep in enumerate(episodes, 1):
+        season_data[i] = ep
+
+    dry_run_stats = {
+        "match": 0,
+        "mismatch": [],
+        "no_chinese_src": []
+    }
+
+    if args.quark:
+        process_quark(args, season_data, dry_run_stats)
+    else:
+        process_local(args, season_data, dry_run_stats)
+
     print("\n所有文件操作完成！")
     
     if args.dry:
