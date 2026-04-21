@@ -174,6 +174,7 @@ def save_json(records: list[EpisodeRecord], path: Path, use_template: bool = Fal
                 template_books = [b for b in books_value if isinstance(b, dict)]
         except Exception:
             template_books = []
+    print(template_books)
 
     books: list[dict[str, Any]] = []
     group_index: dict[tuple[int, str], int] = {}
